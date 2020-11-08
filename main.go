@@ -111,20 +111,7 @@ func parseJson(filePath string) (*config, error) {
 	return &settings, nil
 }
 
-func discordHandler(settings *config, timestamp, daemon, message string) {
-	session, err := discordgo.New("Bot " + *settings.Token)
-	if err != nil {
-		fmt.Println("Failed to start bot, invalid settings")
-		return
-	}
-
-	err = session.Open()
-	if err != nil {
-		fmt.Println("Failed to connect to discord")
-		return
-	}
-	defer session.Close()
-
+func discordHandler(session *discordgo.Session, settings *config, timestamp, daemon, message string) {
 	for i := 0; i < len(settings.Channels); i++ {
 		go authLogGeneral(session, *settings.Channels[i], timestamp, daemon, message)
 	}
@@ -147,17 +134,17 @@ func stringContainsOneOfSubstringArray(a string, b []*string) bool {
 	return false
 }
 
-func handleLog(logLine string, settings *config) {
+func handleLog(session *discordgo.Session, logLine string, settings *config) {
 	listOfStrings := strings.SplitN(logLine, " ", 4)
 	timestamp := listOfStrings[0]
 	daemon := strings.Trim(listOfStrings[2], ":")
 	message := listOfStrings[3]
 	if stringContainsOneOfSubstringArray(daemon, settings.Daemons) {
-		discordHandler(settings, timestamp, daemon, message)
+		discordHandler(session, settings, timestamp, daemon, message)
 	}
 }
 
-func handleNamedPipeSyslog(settings *config, wg *sync.WaitGroup) {
+func handleNamedPipeSyslog(session *discordgo.Session, settings *config, wg *sync.WaitGroup) {
 	namedPipe, _ := os.OpenFile(*settings.NamedPipe, os.O_RDONLY, os.ModeNamedPipe)
 	defer namedPipe.Close()
 	defer wg.Done()
@@ -168,7 +155,7 @@ func handleNamedPipeSyslog(settings *config, wg *sync.WaitGroup) {
 			logLines := strings.Split(logMessage, "\n")
 			for i := 0; i < len(logLines); i++ {
 				logLine := logLines[i]
-				handleLog(logLine, settings)
+				handleLog(session, logLine, settings)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -181,8 +168,16 @@ func main() {
 		fmt.Println("Failed to parse json")
 		return
 	}
+	session, _ := discordgo.New("Bot " + *settings.Token)
+	err = session.Open()
+	if err == nil {
+		defer session.Close()
+	} else {
+		fmt.Println("Failed to load discord")
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go handleNamedPipeSyslog(settings, &wg)
+	go handleNamedPipeSyslog(session, settings, &wg)
 	wg.Wait()
 }
