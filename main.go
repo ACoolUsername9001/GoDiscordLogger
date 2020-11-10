@@ -1,90 +1,18 @@
 package main
 
+import "github.com/mitchellh/mapstructure"
 import (
+	"GoDiscordLogger/discordloghandler"
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
-type config struct {
-	Token     *string
-	Channels  []*string
-	Users     []*string
-	NamedPipe *string
-	Daemons   []*string
-}
-
-func logSSHDActivity(session *discordgo.Session, channel, daemon, username, action, ip, timestamp string) {
-	fields := []*discordgo.MessageEmbedField{
-		{
-			Name:   "**Username**",
-			Value:  username,
-			Inline: false,
-		},
-		{
-			Name:   "**IP**",
-			Value:  ip,
-			Inline: false,
-		},
-	}
-
-	embed := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "rich",
-		Title:       "Log",
-		Description: action,
-		Color:       0,
-		Footer: &discordgo.MessageEmbedFooter{
-			Text:         daemon,
-			IconURL:      "",
-			ProxyIconURL: "",
-		},
-		Image:     nil,
-		Thumbnail: nil,
-		Video:     nil,
-		Provider:  nil,
-		Author:    nil,
-		Fields:    fields,
-		Timestamp: timestamp,
-	}
-	_, err := session.ChannelMessageSendEmbed(channel, &embed)
-	if err != nil {
-		fmt.Println("Failed to send Embed Message")
-	}
-}
-
-func authLogGeneral(session *discordgo.Session, channel, timestamp, daemon, message string) {
-	embed := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "rich",
-		Title:       "Auth Log Message",
-		Description: message,
-		Color:       0,
-		Footer: &discordgo.MessageEmbedFooter{
-			Text:         daemon,
-			IconURL:      "",
-			ProxyIconURL: "",
-		},
-		Image:     nil,
-		Thumbnail: nil,
-		Video:     nil,
-		Provider:  nil,
-		Author:    nil,
-		Fields:    nil,
-		Timestamp: timestamp,
-	}
-	_, err := session.ChannelMessageSendEmbed(channel, &embed)
-	if err != nil {
-		fmt.Println("Failed to send Embed Message")
-	}
-}
-
-func parseJson(filePath string) (*config, error) {
+func parseJson(filePath string) (map[string]interface{}, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		fmt.Println("Failed to open settings file")
@@ -102,50 +30,37 @@ func parseJson(filePath string) (*config, error) {
 		fmt.Println("Failed to read file")
 		return nil, err
 	}
-	var settings config
+	var settings map[string]interface{}
 	err = json.Unmarshal(buffer, &settings)
 	if err != nil {
 		fmt.Println("Failed to unmarshal")
 		return nil, err
 	}
-	return &settings, nil
+	return settings, nil
 }
 
-func discordHandler(session *discordgo.Session, settings *config, timestamp, daemon, message string) {
-	for i := 0; i < len(settings.Channels); i++ {
-		go authLogGeneral(session, *settings.Channels[i], timestamp, daemon, message)
-	}
-	for i := 0; i < len(settings.Users); i++ {
-		channel, err := session.UserChannelCreate(*settings.Users[i])
-		if err != nil {
-			fmt.Println("Failed to send to user with id: " + *settings.Users[i])
-			continue
-		}
-		go authLogGeneral(session, channel.ID, timestamp, daemon, message)
-	}
-}
-
-func stringContainsOneOfSubstringArray(a string, b []*string) bool {
+func stringContainsOneOfSubstringArray(a string, b []interface{}) bool {
 	for _, i := range b {
-		if strings.Contains(a, *i) {
+		if strings.Contains(a, i.(string)) {
 			return true
 		}
 	}
 	return false
 }
 
-func handleLog(session *discordgo.Session, logLine string, settings *config) {
+func handleLog(handler discordloghandler.Handler, logLine string, settings map[string]interface{}) {
 	listOfStrings := strings.SplitN(logLine, " ", 4)
 	timestamp := listOfStrings[0]
 	daemon := strings.Trim(listOfStrings[2], ":")
 	message := listOfStrings[3]
-	if stringContainsOneOfSubstringArray(daemon, settings.Daemons) {
-		discordHandler(session, settings, timestamp, daemon, message)
+	if stringContainsOneOfSubstringArray(daemon, settings["daemons"].([]interface{})) {
+		_ = handler.HandleAuth(timestamp, daemon, message)
 	}
 }
 
-func handleNamedPipeSyslog(session *discordgo.Session, settings *config, wg *sync.WaitGroup) {
-	namedPipe, _ := os.OpenFile(*settings.NamedPipe, os.O_RDONLY, os.ModeNamedPipe)
+func handleNamedPipeSyslog(handler discordloghandler.Handler, settings map[string]interface{}, wg *sync.WaitGroup) {
+	namedPipePath := settings["namedPipe"].(string)
+	namedPipe, _ := os.OpenFile(namedPipePath, os.O_RDONLY, os.ModeNamedPipe)
 	defer namedPipe.Close()
 	defer wg.Done()
 	for {
@@ -155,9 +70,9 @@ func handleNamedPipeSyslog(session *discordgo.Session, settings *config, wg *syn
 			logLines := strings.Split(logMessage, "\n")
 			for i := 0; i < len(logLines); i++ {
 				logLine := logLines[i]
-				handleLog(session, logLine, settings)
+				handleLog(handler, logLine, settings)
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -168,16 +83,28 @@ func main() {
 		fmt.Println("Failed to parse json")
 		return
 	}
-	session, _ := discordgo.New("Bot " + *settings.Token)
-	err = session.Open()
+	discordSettingsDict, _ := settings["discord"].(map[string]interface{})
+	var discordSettings discordloghandler.DConfig
+	err = mapstructure.Decode(&discordSettingsDict, &discordSettings)
+	if err != nil {
+		fmt.Println("Failed to load discord config")
+		return
+	}
+	discordHandler, err := discordloghandler.New(discordSettings)
+	if err != nil {
+		fmt.Println("Failed to create discordHandler")
+		return
+	}
+	err = discordHandler.Open()
 	if err == nil {
-		defer session.Close()
+		defer discordHandler.Close()
 	} else {
 		fmt.Println("Failed to load discord")
+		return
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go handleNamedPipeSyslog(session, settings, &wg)
+	go handleNamedPipeSyslog(discordHandler, settings, &wg)
 	wg.Wait()
 }

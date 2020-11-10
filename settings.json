@@ -1,0 +1,9 @@
+{
+  "discord": {
+    "token": "Nzc0NzY2NjA4NjM5ODUyNTc2.X6cjoQ.9kEisDpwkdLP5v07krvoYW-YaME",
+    "channels": ["774726221871185951"],
+    "users": []
+  },
+  "namedPipe": "/var/log/auth.fifo",
+  "daemons": ["sshd", "sudo", "su"]
+}
