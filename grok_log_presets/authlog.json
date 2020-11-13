@@ -1,0 +1,6 @@
+[
+  {
+    "name": "AuthLogSSHLogin",
+    "grok": "%{PREFIX_WITH_REPORTER:Prefix}%{SPACE}Accepted %{PUBKEY_PASSWORD:PubkeyPassword} for %{USERNAME:Username} from %{IP:Ip} port %{POSINT:Port} %{WORD:SshVersion}(: %{WORD:EncMethod} %{WORD:HashMethod}:%{UNTIL_NEW_LINE:Hash})"
+  }
+]
