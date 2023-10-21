@@ -1,8 +1,6 @@
 package main
 
-import "github.com/mitchellh/mapstructure"
 import (
-	"GoDiscordLogger/discordloghandler"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -10,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"acooldomain.co/discordLogger/discordloghandler"
+	"github.com/mitchellh/mapstructure"
 )
 
 func parseJson(filePath string) (map[string]interface{}, error) {
